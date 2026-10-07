@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GET KEY YOU DEV</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+    :root { --black: #000; --red: #e50914; --white: #fff; --panel: #121212; }
+    body { min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; background: var(--black); }
+    .container { width: 100%; max-width: 450px; padding: 40px 30px; border: 2px solid var(--red); border-radius: 12px; background: var(--panel); box-shadow: 0 0 25px #e5091459; }
+    h1 { margin-bottom: 8px; color: var(--white); text-align: center; font-size: 28px; letter-spacing: 1px; }
+    .sub { margin-bottom: 30px; color: #999; text-align: center; font-size: 14px; }
+    .keybox { display: flex; min-height: 70px; align-items: center; justify-content: center; margin-bottom: 18px; padding: 16px; border: 1px solid var(--red); border-radius: 8px; background: #0a0a0a; color: var(--white); text-align: center; overflow-wrap: anywhere; }
+    #key { font: bold 20px monospace; letter-spacing: 2px; }
+    button { width: 100%; padding: 15px; border: 0; border-radius: 8px; background: var(--red); color: var(--white); font-size: 16px; font-weight: bold; cursor: pointer; }
+    button:hover { background: #b20710; }
+    button:disabled { background: #551014; cursor: wait; }
+    #copy { margin-top: 10px; background: #292929; }
+    #status { min-height: 38px; margin-top: 14px; color: #ddd; text-align: center; font-size: 13px; line-height: 1.45; }
+    .warning { margin-top: 18px; color: #aaa; font-size: 12px; line-height: 1.5; text-align: center; }
+    .footer { margin-top: 22px; color: #666; text-align: center; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>GET KEY YOU DEV</h1>
+    <p class="sub">Gere sua chave de acesso abaixo</p>
+    <div class="keybox"><span id="key">—</span></div>
+    <button id="generate" type="button">GERAR CHAVE</button>
+    <button id="copy" type="button" hidden>COPIAR CHAVE</button>
+    <p id="status" role="status" aria-live="polite"></p>
+    <p class="warning">As keys são gravadas em estado inativo no Realtime Database. Qualquer pessoa que acessar este gerador poderá criar keys. A ativação ocorre no primeiro uso no aplicativo.</p>
+    <p class="footer">© 2026 GET KEY YOU DEV</p>
+  </main>
+<script>
+  // Endpoint público do projeto fornecido pelo proprietário.
+  const DB_KEYS_URL = 'https://kz-dev-1077d-default-rtdb.firebaseio.com/keys';
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const keyEl = document.getElementById('key');
+  const statusEl = document.getElementById('status');
+  const generateBtn = document.getElementById('generate');
+  const copyBtn = document.getElementById('copy');
+
+  function randomChunk(length) {
+    // crypto.getRandomValues evita Math.random para gerar credenciais.
+    let result = '';
+    const limit = Math.floor(256 / alphabet.length) * alphabet.length;
+    while (result.length < length) {
+      const bytes = new Uint8Array(Math.max(16, (length - result.length) * 2));
+      crypto.getRandomValues(bytes);
+      for (const byte of bytes) {
+        if (byte < limit) result += alphabet[byte % alphabet.length];
+        if (result.length === length) break;
+      }
+    }
+    return result;
+  }
+
+  function newKey() {
+    return `KZ-${randomChunk(4)}-${randomChunk(4)}`;
+  }
+
+  async function createKeyInDatabase(key) {
+    const url = `${DB_KEYS_URL}/${encodeURIComponent(key)}.json`;
+    // Ler ETag e existência no mesmo nó; If-Match impede sobrescrever uma colisão.
+    const check = await fetch(url, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { 'X-Firebase-ETag': 'true' }
+    });
+    if (!check.ok) throw new Error(`Falha ao consultar Firebase (HTTP ${check.status}). Confira as regras do Realtime Database.`);
+    const existing = await check.json();
+    const etag = check.headers.get('ETag');
+    if (!etag) throw new Error('O Firebase não retornou o ETag necessário para gravar sem sobrescrever uma key existente.');
+    if (existing !== null) return false;
+
+    const write = await fetch(url, {
+      method: 'PUT',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'If-Match': etag },
+      body: JSON.stringify({ active: false })
+    });
+    if (write.status === 412) return false;
+    if (!write.ok) throw new Error(`Falha ao salvar a key (HTTP ${write.status}). Confira as regras do Realtime Database.`);
+    return true;
+  }
+
+  generateBtn.addEventListener('click', async () => {
+    generateBtn.disabled = true;
+    copyBtn.hidden = true;
+    keyEl.textContent = '...';
+    statusEl.textContent = 'Gravando a key no Firebase…';
+    try {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const key = newKey();
+        if (await createKeyInDatabase(key)) {
+          keyEl.textContent = key;
+          statusEl.textContent = 'Key salva no banco como inativa. Ao ser usada no app, será ativada e ficará permanente.';
+          copyBtn.hidden = false;
+          return;
+        }
+      }
+      throw new Error('Não foi possível reservar uma key única após várias tentativas. Tente novamente.');
+    } catch (error) {
+      keyEl.textContent = '—';
+      statusEl.textContent = error.message || 'Erro ao conectar ao Firebase.';
+    } finally {
+      generateBtn.disabled = false;
+      generateBtn.textContent = 'NOVA CHAVE';
+    }
+  });
+
+  copyBtn.addEventListener('click', async () => {
+    const value = keyEl.textContent;
+    if (!value || value === '—' || value === '...') return;
+    try {
+      await navigator.clipboard.writeText(value);
+      statusEl.textContent = 'Key copiada.';
+    } catch (_) {
+      statusEl.textContent = 'Não foi possível copiar automaticamente. Selecione e copie a key exibida.';
+    }
+  });
+</script>
+</body>
+</html>
